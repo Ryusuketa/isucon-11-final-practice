@@ -33,6 +33,8 @@ CREATE TABLE `courses`
     CONSTRAINT FK_courses_teacher_id FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`)
 );
 
+CREATE INDEX idx_courses_type ON `courses` (`id`, `type`);
+
 CREATE TABLE `registrations`
 (
     `course_id` CHAR(26),
