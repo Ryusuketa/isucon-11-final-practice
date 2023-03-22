@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
@@ -627,8 +628,8 @@ func (h *handlers) GetGrades(c echo.Context) error {
 			" FROM `users`" +
 			" JOIN `registrations` ON `users`.`id` = `registrations`.`user_id`" +
 			" JOIN `courses` ON `registrations`.`course_id` = `courses`.`id`" +
-			" LEFT JOIN `classes` ON `courses`.`id` = `classes`.`course_id`" +
-			" LEFT JOIN `submissions` ON `users`.`id` = `submissions`.`user_id` AND `submissions`.`class_id` = `classes`.`id`" +
+			" JOIN `classes` ON `courses`.`id` = `classes`.`course_id`" +
+			" JOIN `submissions` ON `users`.`id` = `submissions`.`user_id` AND `submissions`.`class_id` = `classes`.`id`" +
 			" WHERE `courses`.`id` = ?" +
 			" GROUP BY `users`.`id`"
 		if err := h.DB.Select(&totals, query, course.ID); err != nil {
@@ -961,6 +962,7 @@ type GetClassResponse struct {
 
 // GetClasses GET /api/courses/:courseID/classes 科目に紐づく講義一覧の取得
 func (h *handlers) GetClasses(c echo.Context) error {
+	time.Sleep(50 * time.Millisecond)
 	userID, _, _, err := getUserInfo(c)
 	if err != nil {
 		c.Logger().Error(err)
@@ -1060,7 +1062,7 @@ func (h *handlers) AddClass(c echo.Context) error {
 		_ = tx.Rollback()
 		if mysqlErr, ok := err.(*mysql.MySQLError); ok && mysqlErr.Number == uint16(mysqlErrNumDuplicateEntry) {
 			var class Class
-			if err := h.DB.Get(&class, "SELECT * FROM `classes` WHERE `course_id` = ? AND `part` = ?", courseID, req.Part); err != nil {
+			if err := h.DB.Get(&class, "SELECT id FROM `classes` WHERE `course_id` = ? AND `part` = ?", courseID, req.Part); err != nil {
 				c.Logger().Error(err)
 				return c.NoContent(http.StatusInternalServerError)
 			}
