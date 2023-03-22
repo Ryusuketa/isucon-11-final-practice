@@ -628,8 +628,8 @@ func (h *handlers) GetGrades(c echo.Context) error {
 			" FROM `users`" +
 			" JOIN `registrations` ON `users`.`id` = `registrations`.`user_id`" +
 			" JOIN `courses` ON `registrations`.`course_id` = `courses`.`id`" +
-			" JOIN `classes` ON `courses`.`id` = `classes`.`course_id`" +
-			" JOIN `submissions` ON `users`.`id` = `submissions`.`user_id` AND `submissions`.`class_id` = `classes`.`id`" +
+			" LEFT JOIN `classes` ON `courses`.`id` = `classes`.`course_id`" +
+			" LEFT JOIN `submissions` ON `users`.`id` = `submissions`.`user_id` AND `submissions`.`class_id` = `classes`.`id`" +
 			" WHERE `courses`.`id` = ?" +
 			" GROUP BY `users`.`id`"
 		if err := h.DB.Select(&totals, query, course.ID); err != nil {
