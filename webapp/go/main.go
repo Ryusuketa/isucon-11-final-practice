@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
@@ -32,6 +34,7 @@ const (
 
 type handlers struct {
 	DB *sqlx.DB
+	mc *memcache.Client
 }
 
 func main() {
@@ -50,6 +53,7 @@ func main() {
 
 	h := &handlers{
 		DB: db,
+		mc: memcache.New(GetEnv("MEMCACHEDCLOUD_SERVERS", "127.0.0.1:11211")),
 	}
 
 	e.POST("/initialize", h.Initialize)
@@ -1387,7 +1391,6 @@ func (h *handlers) GetAnnouncementList(c echo.Context) error {
 	// 	c.Logger().Error(err)
 	// 	return c.NoContent(http.StatusInternalServerError)
 	// }
-	c.Logger().Error(offset)
 
 	var links []string
 	linkURL, err := url.Parse(c.Request().URL.Path + "?" + c.Request().URL.RawQuery)
@@ -1488,9 +1491,16 @@ func (h *handlers) AddAnnouncement(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	for _, user := range targets {
-		if _, err := tx.Exec("INSERT INTO `unread_announcements` (`announcement_id`, `user_id`) VALUES (?, ?)", req.ID, user.ID); err != nil {
-			c.Logger().Error(err)
+	if len(targets) != 0 {
+		var sb strings.Builder
+		sb.WriteString("INSERT INTO `unread_announcements` (`announcement_id`, `user_id`) VALUES")
+		for _, user := range targets {
+			values := fmt.Sprintf("('%s', '%s'),", req.ID, user.ID)
+			sb.WriteString(values)
+		}
+		ins_query := sb.String()
+		ins_query = ins_query[:len(ins_query)-1] + ";"
+		if _, err := tx.Exec(ins_query); err != nil {
 			return c.NoContent(http.StatusInternalServerError)
 		}
 	}
@@ -1512,6 +1522,14 @@ type AnnouncementDetail struct {
 	Unread     bool   `json:"unread" db:"unread"`
 }
 
+type AnnouncementInfo struct {
+	ID         string `json:"id" db:"id"`
+	CourseID   string `json:"course_id" db:"course_id"`
+	CourseName string `json:"course_name" db:"course_name"`
+	Title      string `json:"title" db:"title"`
+	Message    string `json:"message" db:"message"`
+}
+
 // GetAnnouncementDetail GET /api/announcements/:announcementID お知らせ詳細取得
 func (h *handlers) GetAnnouncementDetail(c echo.Context) error {
 	userID, _, _, err := getUserInfo(c)
@@ -1528,19 +1546,57 @@ func (h *handlers) GetAnnouncementDetail(c echo.Context) error {
 	// 	return c.NoContent(http.StatusInternalServerError)
 	// }
 	// defer tx.Rollback()
-
 	var announcement AnnouncementDetail
-	query := "SELECT `announcements`.`id`, `courses`.`id` AS `course_id`, `courses`.`name` AS `course_name`, `announcements`.`title`, `announcements`.`message`, NOT `unread_announcements`.`is_deleted` AS `unread`" +
-		" FROM `announcements`" +
-		" JOIN `courses` ON `courses`.`id` = `announcements`.`course_id`" +
-		" JOIN `unread_announcements` ON `unread_announcements`.`announcement_id` = `announcements`.`id`" +
-		" WHERE `announcements`.`id` = ?" +
-		" AND `unread_announcements`.`user_id` = ?"
-	if err := h.DB.Get(&announcement, query, announcementID, userID); err != nil && err != sql.ErrNoRows {
-		c.Logger().Error(err)
-		return c.NoContent(http.StatusInternalServerError)
-	} else if err == sql.ErrNoRows {
-		return c.String(http.StatusNotFound, "No such announcement.")
+	announcement_detail_cache_item, _ := h.mc.Get(fmt.Sprintf("%s,%s", announcementID, userID))
+	if announcement_detail_cache_item != nil {
+		if err := json.Unmarshal(announcement_detail_cache_item.Value, &announcement); err != nil {
+			c.Logger().Error(err)
+			return c.NoContent(http.StatusInternalServerError)
+		}
+		return c.JSON(http.StatusOK, announcement)
+	}
+
+	// unread以外の情報を取る
+	var announcement_info AnnouncementInfo
+	announcement_info_cache_item, _ := h.mc.Get(announcementID)
+	if announcement_info_cache_item != nil {
+		if err := json.Unmarshal(announcement_info_cache_item.Value, &announcement_info); err != nil {
+			c.Logger().Error(err)
+			return c.NoContent(http.StatusInternalServerError)
+		}
+	} else {
+		query := "SELECT `announcements`.`id`, `courses`.`id` AS `course_id`, `courses`.`name` AS `course_name`, `announcements`.`title`, `announcements`.`message`" +
+			" FROM `announcements`" +
+			" JOIN `courses` ON `courses`.`id` = `announcements`.`course_id`" +
+			" WHERE `announcements`.`id` = ?"
+		if err := h.DB.Get(&announcement_info, query, announcementID); err != nil && err != sql.ErrNoRows {
+			c.Logger().Error(err)
+			return c.NoContent(http.StatusInternalServerError)
+		} else if err == sql.ErrNoRows {
+			return c.String(http.StatusNotFound, "No such announcement.")
+		}
+		announcement_info_json, _ := json.Marshal(announcement_info)
+		h.mc.Set(&memcache.Item{Key: announcementID, Value: []byte(announcement_info_json)})
+	}
+	annoucement_cache := AnnouncementDetail{
+		ID:         announcement_info.ID,
+		CourseID:   announcement_info.CourseID,
+		CourseName: announcement_info.CourseName,
+		Title:      announcement_info.Title,
+		Message:    announcement_info.Message,
+		Unread:     false,
+	}
+	announcement_json, _ := json.Marshal(annoucement_cache)
+	h.mc.Set(&memcache.Item{Key: fmt.Sprintf("%s,%s", announcementID, userID), Value: []byte(announcement_json)})
+
+	// ここまで通ったらunread確定なので、クエリしなくてもいい
+	announcement = AnnouncementDetail{
+		ID:         announcement_info.ID,
+		CourseID:   announcement_info.CourseID,
+		CourseName: announcement_info.CourseName,
+		Title:      announcement_info.Title,
+		Message:    announcement_info.Message,
+		Unread:     true,
 	}
 
 	var registrationCount int
