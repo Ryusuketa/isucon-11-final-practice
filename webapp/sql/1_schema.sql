@@ -35,7 +35,7 @@ CREATE TABLE `courses`
     CONSTRAINT FK_courses_teacher_id FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`)
 );
 
-CREATE INDEX idx_courses_type ON `courses` (`id`, `type`, `teacher_id`);
+CREATE INDEX idx_courses_type ON `courses` (`id`, `type`, `teacher_id`, `period`);
 
 CREATE TABLE `registrations`
 (
@@ -46,7 +46,7 @@ CREATE TABLE `registrations`
     CONSTRAINT FK_registrations_user_id FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
 );
 
-CREATE INDEX idx_registrations ON `registrations` (`user_id`);
+-- CREATE INDEX idx_registrations ON `registrations` (`user_id`);
 
 CREATE TABLE `classes`
 (
@@ -73,6 +73,8 @@ CREATE TABLE `submissions`
     CONSTRAINT FK_submissions_class_id FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`)
 );
 
+CREATE INDEX idx_submissions ON `submissions` (`user_id`, `class_id`);
+
 CREATE TABLE `announcements`
 (
     `id`         CHAR(26) PRIMARY KEY,
@@ -88,9 +90,9 @@ CREATE TABLE `unread_announcements`
     `announcement_id` CHAR(26)   NOT NULL,
     `user_id`         CHAR(26)   NOT NULL,
     `is_deleted`      TINYINT(1) NOT NULL DEFAULT false,
-    PRIMARY KEY (`announcement_id`, `user_id`),
+    -- PRIMARY KEY (`announcement_id`, `user_id`),
     CONSTRAINT FK_unread_announcements_announcement_id FOREIGN KEY (`announcement_id`) REFERENCES `announcements` (`id`),
     CONSTRAINT FK_unread_announcements_user_id FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
 );
 
-CREATE INDEX idx_unread_announcements ON `unread_announcements` (`user_id`, `announcement_id`);
+CREATE INDEX idx_unread_announcements ON `unread_announcements` (`user_id`, `announcement_id`, `is_deleted`);
